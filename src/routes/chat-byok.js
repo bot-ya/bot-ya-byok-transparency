@@ -71,10 +71,7 @@ router.post('/api/chat', async (req, res, next) => {
         try {
             // ---- [chat.js] BYOK decrypt → provider call ----
             if (provider === 'grok') {
-                const encryptedKey = config.apiKey || process.env.GROK_API_KEY;
-                // If the stored value equals the env (platform default), use as-is (plain env value).
-                // Otherwise decrypt (BYOK user-provided ciphertext).
-                const apiKey = encryptedKey === process.env.GROK_API_KEY ? encryptedKey : decrypt(encryptedKey);
+                const apiKey = decrypt(config.apiKey);
                 if (!apiKey) {
                     return next(new AppError("Server Error: Grok API Key not configured.", 500));
                 }
@@ -113,15 +110,14 @@ router.post('/api/chat', async (req, res, next) => {
             } else if (provider === 'ollama') {
                 // Local SLM branch — no BYOK, no quota. Omitted.
 
-            } else {
-                // Default: Google (platform default env or BYOK ciphertext)
-                const encryptedKey = config.apiKey || process.env.GEMINI_API_KEY;
-                const apiKey = encryptedKey === process.env.GEMINI_API_KEY ? encryptedKey : decrypt(encryptedKey);
-
-                if (!apiKey || apiKey.includes('your_api_key')) {
-                    return next(new AppError("Server Error: Gemini API Key not valid.", 500));
+            } else if (provider === 'google' || !provider) {
+                const apiKey = decrypt(config.apiKey);
+                if (!apiKey) {
+                    return next(new AppError("Server Error: Gemini API Key not configured.", 500));
                 }
                 apiResult = await callGeminiAPI(apiKey, model, messages, SYSTEM_PROMPT);
+            } else {
+                return next(new AppError(`Unknown provider: ${provider}`, 500));
             }
         } finally {
             if (botQueue) botQueue.release();

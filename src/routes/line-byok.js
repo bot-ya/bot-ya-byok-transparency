@@ -47,8 +47,7 @@ async function getAIResponse(botId, config, userMessage, systemPrompt) {
 
     try {
         if (provider === 'grok') {
-            const encryptedKey = config.apiKey || process.env.GROK_API_KEY;
-            const apiKey = encryptedKey === process.env.GROK_API_KEY ? encryptedKey : decrypt(encryptedKey);
+            const apiKey = decrypt(config.apiKey);
             apiResult = await callGrokAPI(apiKey, model, messages, systemPrompt);
         } else if (provider === 'openai') {
             const apiKey = decrypt(config.apiKey);
@@ -65,10 +64,11 @@ async function getAIResponse(botId, config, userMessage, systemPrompt) {
             }
         } else if (provider === 'ollama') {
             // Local SLM — no BYOK. Omitted.
-        } else {
-            const encryptedKey = config.apiKey || process.env.GEMINI_API_KEY;
-            const apiKey = encryptedKey === process.env.GEMINI_API_KEY ? encryptedKey : decrypt(encryptedKey);
+        } else if (provider === 'google' || !provider) {
+            const apiKey = decrypt(config.apiKey);
             apiResult = await callGeminiAPI(apiKey, model, messages, systemPrompt);
+        } else {
+            throw new Error(`Unknown provider: ${provider}`);
         }
     } finally {
         if (botQueue) botQueue.release();
