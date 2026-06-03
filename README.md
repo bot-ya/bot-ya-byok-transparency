@@ -1,6 +1,6 @@
 # bot-ya BYOK Transparency
 
-このリポジトリは、ノーコード AI チャットボット作成プラットフォーム [bot-ya（bot屋）](https://bot-ya.com)の **BYOK（Bring Your Own Key）機能** に関わるコードを抜粋したものです。
+このリポジトリは、ノーコード AI チャットボット作成プラットフォーム [bot-ya（bot屋）](https://bot-ya.app)の **BYOK（Bring Your Own Key）機能** に関わるコードを抜粋したものです。
 
 ユーザーから預かった API キーが、bot-ya 内部でどう扱われているかを、誰でも読んで確認できる状態にするためのリポジトリです。
 
@@ -90,7 +90,7 @@ OpenAI / Anthropic / Google / xAI の API が non-200 を返した場合、`chat
 
 ## セキュリティ報告
 
-ここに掲載されたコードに脆弱性を発見した場合は、公開 Issue を立てる前に `support@bot-ya.com` までご連絡ください。
+ここに掲載されたコードに脆弱性を発見した場合は、公開 Issue を立てる前に `info@bot-ya.app` までご連絡ください。
 
 ---
 
@@ -102,5 +102,5 @@ OpenAI / Anthropic / Google / xAI の API が non-200 を返した場合、`chat
 
 ## 関連
 
-- bot-ya 本体: https://bot-ya.com
-- bot-ya の AI 透明性スタンス: https://bot-ya.com/listing.html#ai-transparency
+- bot-ya 本体: https://bot-ya.app
+- bot-ya の AI 透明性スタンス: https://bot-ya.app/listing.html#ai-transparency
