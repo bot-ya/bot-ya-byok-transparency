@@ -6,8 +6,8 @@
 
 |  |  |
 |---|---|
-| **最終同期日** | 2026-05-16 |
-| **同期元 commit** | `b7caf63be92c1f2db7d8c8469dbdc3e4f01b1f11` |
+| **最終同期日** | 2026-07-08 |
+| **同期元 commit** | `be0aac55540a7e464c8a7484b131c89400d7a613` |
 | **ステータス** | Read-only mirror |
 | **ライセンス** | [MIT](./LICENSE) |
 
@@ -49,7 +49,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 
 | ファイル | 役割 |
 |---|---|
-| `src/utils/crypto.js` | API キー保存用の AES-256-CBC encrypt / decrypt |
+| `src/utils/crypto.js` | API キー保存用の AES-256-GCM（認証付き暗号化）encrypt / decrypt。GCM 移行前の旧 CBC 暗号文は読み取りのみ後方互換 |
 | `src/utils/byokQuota.js` | JST 区切りの日次 / 月次トークン使用量追跡、上限到達時のメール通知トリガー |
 | `src/routes/admin-byok.js` | 管理画面 API: activate / deactivate / status / usage / limits / reset-counter |
 | `src/routes/chat-byok.js` | `/api/chat` の BYOK 経路抜粋（quota チェック → decrypt → プロバイダー呼び出し → 使用量加算） |
@@ -65,7 +65,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 
 ### 1. 復号失敗時は throw する
 
-`crypto.js` は復号できなかった暗号文を例外で返します。「失敗時に暗号文をそのまま返す」「空文字を返す」「best-effort で何かを返す」といった fallback パスは存在しません。
+`crypto.js` は復号できなかった暗号文を例外で返します。「失敗時に暗号文をそのまま返す」「空文字を返す」「best-effort で何かを返す」といった fallback パスは存在しません。AES-256-GCM の認証タグにより、暗号文が改ざんされていた場合も復号は例外で止まります（改ざん検知）。
 
 fail-secure 原則: 鍵がきれいに復号できないなら、**止める**。推測しない。
 
@@ -73,7 +73,7 @@ fail-secure 原則: 鍵がきれいに復号できないなら、**止める**�
 
 ### 2. プロバイダーのエラー応答は加工せず転送する
 
-OpenAI / Anthropic / Google / xAI の API が non-200 を返した場合、`chat.js`（および `chat-byok.js`）はプロバイダーの応答ペイロードをそのままクライアントへ転送します。これは **プロバイダーがエラー応答に呼び出し元の API キー値を含めない** という前提に依存しています。本リポジトリ作成時点では、サポート対象の 4 プロバイダーすべてがこの前提を満たしています。
+OpenAI / Anthropic / Google / xAI / DeepSeek / Alibaba（Qwen）の API が non-200 を返した場合、`chat.js`（および `chat-byok.js`）はプロバイダーの応答ペイロードをそのままクライアントへ転送します。これは **プロバイダーがエラー応答に呼び出し元の API キー値を含めない** という前提に依存しています。最終同期時点では、サポート対象の 6 プロバイダーすべてがこの前提を満たしています。
 
 これは見落としではなく明示的な設計判断です。もしどこかのプロバイダーがエラー応答にキーを反射するケースを発見した場合は、それは本物のバグとして報告してください（下記 "セキュリティ報告" 参照）。
 

@@ -21,7 +21,7 @@ const db = require('../db/db');
 const { requireAuth } = require('../middleware/auth');
 const { AppError } = require('../middleware/errorHandler');
 const { encrypt, decrypt } = require('../utils/crypto');
-const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI } = require('../utils/ai');
+const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI, callDeepSeekAPI, callQwenAPI, normalizeModelId } = require('../utils/ai');
 const {
     DEFAULT_DAILY_LIMIT,
     DEFAULT_MONTHLY_LIMIT,
@@ -60,8 +60,14 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
         if (!provider || !model || !apiKey) {
             return next(new AppError("プロバイダー、モデル名、APIキーは必須です", 400));
         }
-        if (!['google', 'grok', 'openai', 'anthropic'].includes(provider)) {
-            return next(new AppError("対応プロバイダーはGoogle、Grok、ChatGPT、Claudeのみです", 400));
+        if (!['google', 'grok', 'openai', 'anthropic', 'deepseek', 'qwen'].includes(provider)) {
+            return next(new AppError("対応プロバイダーはGoogle、Grok、ChatGPT、Claude、DeepSeek、Qwenのみです", 400));
+        }
+
+        // 表示名（"Gemini 3 Flash" 等）やドキュメントからのコピペ（models/ 付き・全角混入）を吸収
+        const normalizedModel = normalizeModelId(model);
+        if (!normalizedModel) {
+            return next(new AppError("モデル名の形式が不正です。「Gemini 3 Flash」のような表示名ではなく、モデルID（例: gemini-3-flash-preview）を入力してください。", 400));
         }
 
         const bot = await db.get("SELECT api_key, provider, model FROM bots WHERE bot_id = ?", [botId]);
@@ -73,9 +79,11 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
                 google: callGeminiAPI,
                 grok: callGrokAPI,
                 openai: callChatGPTAPI,
-                anthropic: callClaudeAPI
+                anthropic: callClaudeAPI,
+                deepseek: callDeepSeekAPI,
+                qwen: callQwenAPI
             };
-            const result = await testCallers[provider](apiKey, model, testHistory, "Reply with OK");
+            const result = await testCallers[provider](apiKey, normalizedModel, testHistory, "Reply with OK");
             if (result.status && result.status >= 400) {
                 const errMsg = result.data?.error?.message || JSON.stringify(result.data);
                 console.error('[BYOK] Test call failed:', result.status, errMsg);
@@ -94,7 +102,7 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
         const encryptedKey = encrypt(apiKey);
         await db.run(
             "UPDATE bots SET api_key = ?, provider = ?, model = ?, byok_enabled = 1, byok_agreed_at = CURRENT_TIMESTAMP WHERE bot_id = ?",
-            [encryptedKey, provider, model, botId]
+            [encryptedKey, provider, normalizedModel, botId]
         );
 
         // [BYOK Quota] 初回 activate なら推奨デフォルト値をセット、期間/カウンタ/通知フラグはクリーンスタート
@@ -120,7 +128,8 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
             [dailyLimit, monthlyLimit, today, thisMonth, botId]
         );
 
-        res.json({ success: true, message: "BYOK有効化に成功しました" });
+        // model は正規化済みの保存値を返す（フロントは入力値でなくこれを表示に使う）
+        res.json({ success: true, message: "BYOK有効化に成功しました", model: normalizedModel });
     } catch (e) {
         next(e);
     }
@@ -143,8 +152,9 @@ router.post('/api/admin/byok/deactivate', requireAuth, async (req, res, next) =>
         // byok_enabled=1 なら activate を経由している → pre_byok_* を NULL/空文字含めそのまま復元。
         // 旧コードは pre_byok_api_key を falsy 判定して provider/model まで空クリアしていた
         // （Free ユーザーの初期 api_key='' で誤動作するバグ）。activate 直前の状態に戻すのが正。
+        // 使用中ソースが BYOK だったら bot屋既定(platform)へフォールバック（凍結: 壊れた選択を作らない）
         await db.run(
-            "UPDATE bots SET api_key = ?, provider = ?, model = ?, byok_enabled = 0, pre_byok_api_key = NULL, pre_byok_provider = NULL, pre_byok_model = NULL WHERE bot_id = ?",
+            "UPDATE bots SET api_key = ?, provider = ?, model = ?, byok_enabled = 0, pre_byok_api_key = NULL, pre_byok_provider = NULL, pre_byok_model = NULL, ai_source = CASE WHEN ai_source = 'byok' THEN 'platform' ELSE ai_source END WHERE bot_id = ?",
             [bot.pre_byok_api_key, bot.pre_byok_provider, bot.pre_byok_model, botId]
         );
         res.json({ success: true, message: "BYOKを無効化しました" });

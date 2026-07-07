@@ -8,10 +8,11 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
 
 | Column | Type | Default | Role |
 |---|---|---|---|
-| `api_key` | TEXT | — | **Encrypted** API key ciphertext (format: `iv:ciphertext` hex). For BYOK-active bots this holds the user's key. For platform-default Gemini fallback, `chat.js` / `line.js` compare the value to `process.env.GEMINI_API_KEY` directly — if equal, treats it as the plain env value; otherwise decrypts. |
-| `provider` | TEXT | — | `google` / `grok` / `openai` / `anthropic` / `ollama` / `custom`. |
-| `model` | TEXT | — | Provider-specific model identifier. |
-| `byok_enabled` | INTEGER | 0 | `1` = BYOK active. The flag also drives the free-plan exemption in `chat.js` / `line.js`. |
+| `api_key` | TEXT | — | **Encrypted** API key ciphertext (AES-256-GCM, format: `iv:authTag:ciphertext` hex; pre-GCM rows may still be legacy CBC `iv:ciphertext`, read-only backward compat). For BYOK-active bots this holds the user's key. There is no env-var fallback — cloud keys exist only via BYOK. |
+| `provider` | TEXT | — | `google` / `grok` / `openai` / `anthropic` / `deepseek` / `qwen` / `ollama` / `custom`. |
+| `model` | TEXT | — | Provider-specific model identifier. Normalized on activate (NFKC, trim, strip `models/` prefix; charset-validated). |
+| `byok_enabled` | INTEGER | 0 | `1` = BYOK is *available* for this bot (activated with a validated key). |
+| `ai_source` | TEXT | `platform` | Which inference source the owner explicitly selected: `platform` (bot-ya default Ollama) / `byok` / `byom` (owner's own machine via reverse-WS connector). BYOK credentials are used only when this is `byok` — there is no implicit override. Also drives the free-plan exemption (`free` + `platform` = scenario Q&A only). |
 | `byok_agreed_at` | DATETIME | NULL | Set to `CURRENT_TIMESTAMP` on activate. Records terms-of-use acceptance timestamp. |
 | `pre_byok_api_key` | TEXT | NULL | Snapshot of `api_key` taken at activate. Used to restore state on deactivate (so the previous platform-default config is recovered exactly). |
 | `pre_byok_provider` | TEXT | NULL | Snapshot of `provider` at activate. |
@@ -33,6 +34,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         │  POST /api/admin/byok/activate
         │  (provider, model, apiKey, agreedTerms)
         │
+        │  ├─ normalize model id (NFKC / trim / strip "models/" / charset check)
         │  ├─ test call to provider (validates key)
         │  ├─ snapshot api_key/provider/model → pre_byok_*
         │  ├─ encrypt(apiKey) → api_key
@@ -41,10 +43,12 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         ▼
 [byok_enabled=1, encrypted key in api_key]
         │
-        │  /api/chat or LINE webhook
+        │  owner selects ai_source='byok' (model tab; not implicit)
+        │
+        │  /api/chat or LINE webhook  — resolveAiRouting(config) picks the path
         │
         │  ├─ checkQuota() — block 429 if over limit
-        │  ├─ decrypt(api_key) — throws if cipher corrupt
+        │  ├─ decrypt(api_key) — throws if cipher corrupt/tampered (GCM auth tag)
         │  ├─ provider API call (Authorization header only)
         │  └─ incrementUsage() — fire-and-forget; 100%-cross triggers email
         │
@@ -52,17 +56,19 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         │
         │  └─ restore api_key/provider/model from pre_byok_*
         │     clear pre_byok_*, byok_enabled = 0
+        │     ai_source: 'byok' → 'platform' (never leave a broken selection)
         ▼
 [plan=free, byok_enabled=0]   (limits and counters retained)
 ```
 
 ## Encryption
 
-- Algorithm: **AES-256-CBC**
+- Algorithm: **AES-256-GCM** (authenticated encryption — the auth tag detects ciphertext tampering)
 - Key derivation: `sha256(ENCRYPTION_KEY)` — see `src/utils/crypto.js`
-- IV: random 16 bytes per encrypt call, prepended as hex
-- Storage format: `<iv hex>:<ciphertext hex>`
-- Decryption failure: **throws** (no fallback). See README "Security design choices".
+- IV: random 12 bytes (96-bit nonce, the GCM standard size) per encrypt call
+- Storage format: `<iv hex>:<authTag hex>:<ciphertext hex>`
+- Legacy: rows encrypted before the GCM upgrade use AES-256-CBC `<iv hex>:<ciphertext hex>` — still decryptable (read-only backward compat); everything written now is GCM
+- Decryption failure (unrecognized format, corrupt, or failed auth tag): **throws** (no fallback). See README "Security design choices".
 
 ## JST period keys
 

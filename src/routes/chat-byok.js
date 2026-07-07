@@ -2,16 +2,18 @@
  * BYOK transparency excerpt of src/routes/chat.js
  *
  * Shows the BYOK-related code paths only:
- *   1. Free plan exemption for BYOK users
- *   2. Pre-request quota check (block if over limit)
- *   3. Decrypt → provider API call (Grok / OpenAI / Anthropic / custom / Gemini)
- *   4. Post-response usage increment (fire-and-forget) + over-limit email notification
+ *   1. AI source resolution (resolveAiRouting) — the bot owner explicitly selects
+ *      'platform' / 'byok' / 'byom'; BYOK is used only when selected (no implicit override)
+ *   2. Free plan exemption for self-funded sources (BYOK / BYOM)
+ *   3. Pre-request quota check (block if over limit)
+ *   4. Decrypt → provider API call (Grok / OpenAI / Anthropic / DeepSeek / Qwen / custom / Gemini)
+ *   5. Post-response usage increment (fire-and-forget) + over-limit email notification
  *
  * Omitted from the original chat.js:
  *   - origin allowlist / domain check
  *   - RAG vector search (vectordb / embeddings)
  *   - knowledge base assembly / system prompt construction
- *   - Ollama branch (local SLM, no BYOK)
+ *   - Ollama branch (local SLM / BYOM reverse-WS connector relay, no BYOK)
  *   - rate limiters, logging, error handling
  *
  * Read-only — this file does NOT run as-is. See README.md.
@@ -20,7 +22,7 @@
 const express = require('express');
 const router = express.Router();
 const { loadClientsConfig } = require('../utils/config');
-const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI, getBotQueue } = require('../utils/ai');
+const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI, callDeepSeekAPI, callQwenAPI, getBotQueue, resolveAiRouting } = require('../utils/ai');
 const { decrypt } = require('../utils/crypto');
 const {
     checkQuota,
@@ -44,12 +46,14 @@ router.post('/api/chat', async (req, res, next) => {
         const config = BOT_CONFIG[botId];
         if (!config) return next(new AppError("Bot ID not found.", 404));
 
-        const provider = config.provider || 'google';
-        const model = config.model;
+        // ---- [chat.js] AI source resolution — shared with the LINE webhook ----
+        // The owner explicitly selects the inference source ('platform' / 'byok' / 'byom').
+        // BYOK credentials are used only when aiSource === 'byok' resolves the provider here.
+        const { aiSource, provider, model } = resolveAiRouting(config);
         const SYSTEM_PROMPT = ''; // omitted — see chat.js for system prompt construction
 
-        // ---- [chat.js] Free plan block — BYOK users are exempt ----
-        if (config.plan === 'free' && !config.byokEnabled) {
+        // ---- [chat.js] Free plan block — self-funded BYOK / BYOM are exempt ----
+        if (config.plan === 'free' && aiSource === 'platform') {
             return next(new AppError("フリープランではAIチャットは利用できません。シナリオQ&Aをご利用ください。", 403));
         }
 
@@ -93,6 +97,20 @@ router.post('/api/chat', async (req, res, next) => {
                 }
                 apiResult = await callClaudeAPI(apiKey, model, messages, SYSTEM_PROMPT);
 
+            } else if (provider === 'deepseek') {
+                const apiKey = decrypt(config.apiKey);
+                if (!apiKey) {
+                    return next(new AppError("Configuration Error: DeepSeek API Key is missing.", 500));
+                }
+                apiResult = await callDeepSeekAPI(apiKey, model, messages, SYSTEM_PROMPT);
+
+            } else if (provider === 'qwen') {
+                const apiKey = decrypt(config.apiKey);
+                if (!apiKey) {
+                    return next(new AppError("Configuration Error: Qwen API Key is missing.", 500));
+                }
+                apiResult = await callQwenAPI(apiKey, model, messages, SYSTEM_PROMPT);
+
             } else if (provider === 'custom') {
                 // [SECURITY] Strict BYOK Enforcement
                 const encryptedKey = config.apiKey;
@@ -109,6 +127,8 @@ router.post('/api/chat', async (req, res, next) => {
 
             } else if (provider === 'ollama') {
                 // Local SLM branch — no BYOK, no quota. Omitted.
+                // (Covers both the platform-default Ollama and BYOM: the owner's own
+                //  machine reached via a reverse-WS connector. No cloud API key involved.)
 
             } else if (provider === 'google' || !provider) {
                 const apiKey = decrypt(config.apiKey);
