@@ -137,29 +137,37 @@ async function incrementUsage(botId, tokens) {
     const before = await loadAndRollover(botId);
     if (!before) return { dailyJustCrossed: false, monthlyJustCrossed: false, state: null };
 
-    const newDaily = before.dailyUsed + tokens;
-    const newMonthly = before.monthlyUsed + tokens;
-
+    // 加算は SQL 側で行う（アトミック）。JS で計算した値を書き戻す方式だと、
+    // bot キューが許す同時リクエスト（最大3）の完了が重なったとき加算がロストし
+    // 過少カウントになる。加算後の実値は読み直して返す。
     await db.run(
-        'UPDATE bots SET byok_daily_used = ?, byok_monthly_used = ? WHERE bot_id = ?',
-        [newDaily, newMonthly, botId]
+        'UPDATE bots SET byok_daily_used = byok_daily_used + ?, byok_monthly_used = byok_monthly_used + ? WHERE bot_id = ?',
+        [tokens, tokens, botId]
     );
+    const after = await db.get(
+        'SELECT byok_daily_used, byok_monthly_used FROM bots WHERE bot_id = ?',
+        [botId]
+    );
+    const newDaily = after ? after.byok_daily_used : before.dailyUsed + tokens;
+    const newMonthly = after ? after.byok_monthly_used : before.monthlyUsed + tokens;
 
-    // 100% 到達した瞬間（このリクエストで超えた）を検出。未通知でかつ limit>0 の場合のみ true
-    const dailyJustCrossed = before.dailyLimit > 0
-        && before.dailyUsed < before.dailyLimit
-        && newDaily >= before.dailyLimit
-        && before.dailyNotified === 0;
-    const monthlyJustCrossed = before.monthlyLimit > 0
-        && before.monthlyUsed < before.monthlyLimit
-        && newMonthly >= before.monthlyLimit
-        && before.monthlyNotified === 0;
-
-    if (dailyJustCrossed) {
-        await db.run('UPDATE bots SET byok_daily_notified = 1 WHERE bot_id = ?', [botId]);
+    // 100% 到達通知: 加算後の値が上限以上なら notified=0 の行だけを 1 に立てる条件付き
+    // UPDATE。changes=1 を取れた 1 リクエストだけが通知を担う（同時到達での 2 重送信防止）。
+    let dailyJustCrossed = false;
+    let monthlyJustCrossed = false;
+    if (before.dailyLimit > 0 && newDaily >= before.dailyLimit) {
+        const r = await db.run(
+            'UPDATE bots SET byok_daily_notified = 1 WHERE bot_id = ? AND byok_daily_notified = 0',
+            [botId]
+        );
+        dailyJustCrossed = r.changes === 1;
     }
-    if (monthlyJustCrossed) {
-        await db.run('UPDATE bots SET byok_monthly_notified = 1 WHERE bot_id = ?', [botId]);
+    if (before.monthlyLimit > 0 && newMonthly >= before.monthlyLimit) {
+        const r = await db.run(
+            'UPDATE bots SET byok_monthly_notified = 1 WHERE bot_id = ? AND byok_monthly_notified = 0',
+            [botId]
+        );
+        monthlyJustCrossed = r.changes === 1;
     }
 
     return {

@@ -5,6 +5,7 @@
  *   - GET  /api/admin/byok/status
  *   - POST /api/admin/byok/activate
  *   - POST /api/admin/byok/deactivate
+ *   - POST /api/admin/byok/speed-priority
  *   - GET  /api/admin/byok/usage
  *   - POST /api/admin/byok/limits
  *   - POST /api/admin/byok/reset-counter
@@ -37,12 +38,13 @@ const {
 router.get('/api/admin/byok/status', requireAuth, async (req, res, next) => {
     try {
         const botId = req.botId;
-        const row = await db.get("SELECT byok_enabled, provider, model FROM bots WHERE bot_id = ?", [botId]);
+        const row = await db.get("SELECT byok_enabled, provider, model, byok_speed_priority FROM bots WHERE bot_id = ?", [botId]);
         if (!row) return next(new AppError("Bot not found", 404));
         res.json({
             byokEnabled: row.byok_enabled === 1,
             provider: row.byok_enabled === 1 ? row.provider : '',
-            model: row.byok_enabled === 1 ? row.model : ''
+            model: row.byok_enabled === 1 ? row.model : '',
+            speedPriority: row.byok_speed_priority === 1
         });
     } catch (e) {
         next(e);
@@ -70,7 +72,7 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
             return next(new AppError("モデル名の形式が不正です。「Gemini 3 Flash」のような表示名ではなく、モデルID（例: gemini-3-flash-preview）を入力してください。", 400));
         }
 
-        const bot = await db.get("SELECT api_key, provider, model FROM bots WHERE bot_id = ?", [botId]);
+        const bot = await db.get("SELECT api_key, provider, model, byok_enabled FROM bots WHERE bot_id = ?", [botId]);
         if (!bot) return next(new AppError("Bot not found", 404));
 
         const testHistory = [{ role: "user", content: "Hello" }];
@@ -94,10 +96,17 @@ router.post('/api/admin/byok/activate', requireAuth, async (req, res, next) => {
             return next(new AppError("APIキーまたはモデル名が無効です。接続テストに失敗しました。", 400));
         }
 
-        await db.run(
-            "UPDATE bots SET pre_byok_api_key = api_key, pre_byok_provider = provider, pre_byok_model = model WHERE bot_id = ?",
-            [botId]
-        );
+        // pre_byok_* は「BYOK 導入前の状態」の退避スロット。保存するのは初回 activate
+        // （byok_enabled=0 → 1 の遷移）のみ。BYOK 有効中の「設定変更」再 activate で
+        // 上書きすると、退避値が旧 BYOK 認証情報になり、deactivate 時にそれが
+        // api_key/provider/model へ復元されて byok_enabled=0 のままクラウド API を
+        // quota 外で呼び続ける事故になる（platform 選択のつもりが旧キー課金）。
+        if (!bot.byok_enabled) {
+            await db.run(
+                "UPDATE bots SET pre_byok_api_key = api_key, pre_byok_provider = provider, pre_byok_model = model WHERE bot_id = ?",
+                [botId]
+            );
+        }
 
         const encryptedKey = encrypt(apiKey);
         await db.run(
@@ -158,6 +167,30 @@ router.post('/api/admin/byok/deactivate', requireAuth, async (req, res, next) =>
             [bot.pre_byok_api_key, bot.pre_byok_provider, bot.pre_byok_model, botId]
         );
         res.json({ success: true, message: "BYOKを無効化しました" });
+    } catch (e) {
+        next(e);
+    }
+});
+
+// 応答速度優先トグル（候補8）: ON のときだけ Gemini リクエストに thinkingBudget:0 を送り、
+// 2.5 Flash 系のデフォルト thinking（初動1〜2秒の上乗せ）を切る。thinking 非対応モデルでは
+// エラーになり得るため一律適用はせず、オーナーの明示 ON に閉じる。設定は deactivate 後も
+// 保持する（上限値と同じ「オーナーの好み」扱い。効くのは BYOK 選択時のみ）。
+router.post('/api/admin/byok/speed-priority', requireAuth, async (req, res, next) => {
+    try {
+        const botId = req.botId;
+        const { enabled } = req.body || {};
+        if (typeof enabled !== 'boolean') {
+            return next(new AppError("enabled は true / false で指定してください", 400));
+        }
+        const bot = await db.get("SELECT byok_enabled FROM bots WHERE bot_id = ?", [botId]);
+        if (!bot) return next(new AppError("Bot not found", 404));
+
+        await db.run(
+            'UPDATE bots SET byok_speed_priority = ? WHERE bot_id = ?',
+            [enabled ? 1 : 0, botId]
+        );
+        res.json({ success: true, speedPriority: enabled });
     } catch (e) {
         next(e);
     }

@@ -77,7 +77,10 @@ async function getAIResponse(botId, config, routing, userMessage, systemPrompt) 
             //  machine reached via a reverse-WS connector. No cloud API key involved.)
         } else if (provider === 'google' || !provider) {
             const apiKey = decrypt(config.apiKey);
-            apiResult = await callGeminiAPI(apiKey, model, messages, systemPrompt);
+            // Speed-priority toggle: same condition as web chat (chat.js) — applied only
+            // when the owner selected BYOK and turned the toggle ON. See chat-byok.js.
+            apiResult = await callGeminiAPI(apiKey, model, messages, systemPrompt,
+                { speedPriority: routing.aiSource === 'byok' && !!config.byokSpeedPriority });
         } else {
             throw new Error(`Unknown provider: ${provider}`);
         }

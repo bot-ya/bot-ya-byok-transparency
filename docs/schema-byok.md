@@ -14,7 +14,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
 | `byok_enabled` | INTEGER | 0 | `1` = BYOK is *available* for this bot (activated with a validated key). |
 | `ai_source` | TEXT | `platform` | Which inference source the owner explicitly selected: `platform` (bot-ya default Ollama) / `byok` / `byom` (owner's own machine via reverse-WS connector). BYOK credentials are used only when this is `byok` — there is no implicit override. Also drives the free-plan exemption (`free` + `platform` = scenario Q&A only). |
 | `byok_agreed_at` | DATETIME | NULL | Set to `CURRENT_TIMESTAMP` on activate. Records terms-of-use acceptance timestamp. |
-| `pre_byok_api_key` | TEXT | NULL | Snapshot of `api_key` taken at activate. Used to restore state on deactivate (so the previous platform-default config is recovered exactly). |
+| `pre_byok_api_key` | TEXT | NULL | Snapshot of `api_key` taken at the **first** activate only (`byok_enabled` 0 → 1). Used to restore state on deactivate (so the pre-BYOK platform config is recovered exactly). Re-activating while already enabled ("change settings") must NOT overwrite it — otherwise deactivate would restore the *old BYOK credentials* into the live slots with `byok_enabled=0`, silently keeping cloud calls on the old key outside quota tracking. |
 | `pre_byok_provider` | TEXT | NULL | Snapshot of `provider` at activate. |
 | `pre_byok_model` | TEXT | NULL | Snapshot of `model` at activate. |
 | `byok_daily_limit` | INTEGER | 0 | Daily token cap. `0` = unlimited. Set to `DEFAULT_DAILY_LIMIT` (100,000) on first activate, preserved on re-activate if already > 0. |
@@ -25,6 +25,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
 | `byok_monthly_period` | TEXT | NULL | JST month key in `'YYYY-MM'` format. |
 | `byok_daily_notified` | INTEGER | 0 | `1` after the 100% over-limit email has been sent for the current daily period. Cleared on rollover. |
 | `byok_monthly_notified` | INTEGER | 0 | Same as `byok_daily_notified`, monthly version. |
+| `byok_speed_priority` | INTEGER | 0 | Owner opt-in "speed priority" toggle. When `1` and `ai_source='byok'` with a Gemini provider, requests carry `generationConfig.thinkingConfig.thinkingBudget: 0` (skips the default thinking phase of 2.5-Flash-class models). When `0`, no `generationConfig` is sent at all, so non-thinking models are unaffected. Preserved across deactivate (owner preference, like limits). |
 
 ## Lifecycle
 
@@ -36,7 +37,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         │
         │  ├─ normalize model id (NFKC / trim / strip "models/" / charset check)
         │  ├─ test call to provider (validates key)
-        │  ├─ snapshot api_key/provider/model → pre_byok_*
+        │  ├─ snapshot api_key/provider/model → pre_byok_*  (first activate only)
         │  ├─ encrypt(apiKey) → api_key
         │  ├─ byok_enabled = 1, byok_agreed_at = NOW()
         │  └─ set default daily/monthly limits if not previously set
