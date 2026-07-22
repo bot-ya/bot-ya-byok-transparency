@@ -6,8 +6,16 @@
  *      'platform' / 'byok' / 'byom'; BYOK is used only when selected (no implicit override)
  *   2. Free plan exemption for self-funded sources (BYOK / BYOM)
  *   3. Pre-request quota check (block if over limit)
- *   4. Decrypt → provider API call (Grok / OpenAI / Anthropic / DeepSeek / Qwen / custom / Gemini)
- *   5. Post-response usage increment (fire-and-forget) + over-limit email notification
+ *   4a. BYOK-Local (byok_mode='local'): the server holds NO key. The request is relayed
+ *       to the owner's machine over the reverse-WS connector as a fixed semantic schema
+ *       {provider, model, messages, systemPrompt, options} — no URL, no headers, no key.
+ *       The connector (see connector/bot-ya-connector.js) builds the HTTP request from
+ *       its own hardcoded provider table and its locally-stored key.
+ *   4b. BYOK (server custody): Decrypt → provider API call
+ *       (Grok / OpenAI / Anthropic / DeepSeek / Qwen / custom / Gemini)
+ *   5. Post-response usage increment (fire-and-forget) + over-limit email notification.
+ *      For BYOK-Local the connector reports usage in the relay's end frame, so quota
+ *      tracking works identically without the key ever touching the server.
  *
  * Omitted from the original chat.js:
  *   - origin allowlist / domain check
@@ -24,6 +32,7 @@ const router = express.Router();
 const { loadClientsConfig } = require('../utils/config');
 const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI, callDeepSeekAPI, callQwenAPI, getBotQueue, resolveAiRouting } = require('../utils/ai');
 const { decrypt } = require('../utils/crypto');
+const { isConnectorOnline, callCloudViaConnector, BYOK_LOCAL_OFFLINE_MESSAGE } = require('../utils/connectorHub');
 const {
     checkQuota,
     incrementUsage,
@@ -49,7 +58,7 @@ router.post('/api/chat', async (req, res, next) => {
         // ---- [chat.js] AI source resolution — shared with the LINE webhook ----
         // The owner explicitly selects the inference source ('platform' / 'byok' / 'byom').
         // BYOK credentials are used only when aiSource === 'byok' resolves the provider here.
-        const { aiSource, provider, model } = resolveAiRouting(config);
+        const { aiSource, provider, model, byokLocal } = resolveAiRouting(config);
         const SYSTEM_PROMPT = ''; // omitted — see chat.js for system prompt construction
 
         // ---- [chat.js] Free plan block — self-funded BYOK / BYOM are exempt ----
@@ -73,8 +82,22 @@ router.post('/api/chat', async (req, res, next) => {
         if (botQueue) await botQueue.acquire();
 
         try {
-            // ---- [chat.js] BYOK decrypt → provider call ----
-            if (provider === 'grok') {
+            // ---- [chat.js] BYOK-Local: no key on the server — relay to the owner's machine ----
+            // The payload sent over the WS is ONLY {provider, model, messages, systemPrompt,
+            // options}. The server cannot specify a URL, path or headers, so even a fully
+            // compromised server cannot make the connector send the key anywhere but the
+            // provider hardcoded in the connector's own allowlist.
+            if (byokLocal) {
+                if (!isConnectorOnline(config.ownerId)) {
+                    // Owner's connector app is offline → explicit offline message.
+                    // Never silently falls back to the platform model.
+                    return res.json({ text: BYOK_LOCAL_OFFLINE_MESSAGE });
+                }
+                apiResult = await callCloudViaConnector(config.ownerId, provider, model, messages, SYSTEM_PROMPT,
+                    { speedPriority: !!config.byokSpeedPriority });
+
+            // ---- [chat.js] BYOK (server custody): decrypt → provider call ----
+            } else if (provider === 'grok') {
                 const apiKey = decrypt(config.apiKey);
                 if (!apiKey) {
                     return next(new AppError("Server Error: Grok API Key not configured.", 500));

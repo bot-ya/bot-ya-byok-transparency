@@ -6,8 +6,8 @@
 
 |  |  |
 |---|---|
-| **最終同期日** | 2026-07-08 |
-| **同期元 commit** | `be0aac55540a7e464c8a7484b131c89400d7a613` |
+| **最終同期日** | 2026-07-22 |
+| **同期元 commit** | `28fda77ddff10feb215c3d2df6a2c405cda9eb44` |
 | **ステータス** | Read-only mirror |
 | **ライセンス** | [MIT](./LICENSE) |
 
@@ -26,6 +26,18 @@ BYOK は bot-ya がユーザーの API キーを預かる機能です。「他�
 を、誰でも読んで確認できます。bot-ya が公の場で表明してきた「クラウド API を中継しない、中間マージンを取らない」というスタンスを、コードレベルで確認できる状態にするのが目的です。
 
 bot-ya のプロダクト本体は別の関心事として事業のために保護しています。「BYOK だけ公開」は選択的透明性ではなく、**信頼が問われる場所は開示する / 事業として守る範囲は守る** という一貫した区別の表れです。
+
+## BYOK-Local — 「預からない」への転換
+
+2026-07 から、bot-ya.app 本体は **BYOK-Local（完全ローカル鍵）** に移行します。API キーはサーバーに保存されるのではなく、オーナーのマシンで動く「接続アプリ」（`connector/bot-ya-connector.js`、配布 exe のソースそのもの）の中にだけ保存されます。
+
+- **キーはブラウザから `127.0.0.1` の接続アプリへ直送**され、bot-ya のサーバーを一度も通過しません（`admin-byok.js` の `/activate-local` はキーを受け取らず、誤って同送された場合は保存せず 400 で拒否します。キー同送の旧 `/activate` は `BYOK_KEY_CUSTODY=local` で恒久 400 です）
+- チャット時にサーバーが接続アプリへ送れるのは **`{provider, model, messages, systemPrompt, options}` という固定スキーマだけ**です（`connectorHub-cloud.js`）。URL・パス・ヘッダーを表現するフィールドが存在しないため、仮にサーバーが完全に侵害されても「キーを攻撃者の URL へ送れ」という指示を表現できません。宛先は接続アプリ内のプロバイダー固定表が 100% 決めます
+- 接続アプリのローカル受け口は **write-only**（キーを返すエンドポイントが存在しない）+ Origin 固定 + `127.0.0.1` bind です
+
+つまり「運営はあなたのキーを悪用しません（信じてください）」ではなく、「**構造上できません**」。この主張はこのリポジトリのコードで検証できます。
+
+なお、サーバー預かりモード（AES-256-GCM 暗号化保存）のコードパスも残っています。これは白ラベル納品版（組織内運用）が引き続き使うもので、どちらのモードで動くかはデプロイ時の `BYOK_KEY_CUSTODY` 環境変数で固定されます。
 
 ---
 
@@ -54,7 +66,9 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 | `src/routes/admin-byok.js` | 管理画面 API: activate / deactivate / status / usage / limits / reset-counter |
 | `src/routes/chat-byok.js` | `/api/chat` の BYOK 経路抜粋（quota チェック → decrypt → プロバイダー呼び出し → 使用量加算） |
 | `src/routes/line-byok.js` | LINE webhook の BYOK 経路抜粋（web チャットと同じ財布を共有） |
-| `docs/schema-byok.md` | `bots` テーブルの BYOK 関連カラム定義、ライフサイクル、暗号化方式 |
+| `src/utils/connectorHub-cloud.js` | **BYOK-Local**: サーバーがコネクタへ送る意味論スキーマの抜粋（URL/ヘッダー/キーを表現するフィールドが存在しないこと） |
+| `connector/bot-ya-connector.js` | **BYOK-Local**: 配布している「接続アプリ」の完全なソース（本体からそのままコピー）。キーの受け口（write-only・Origin 固定）・ローカル保存・プロバイダー固定表・レート天井のすべてがここで読める |
+| `docs/schema-byok.md` | `bots` テーブルの BYOK 関連カラム定義、ライフサイクル（server / local 両モード）、暗号化方式 |
 | `.env.example` | 本リポ範囲で関係する環境変数（`ENCRYPTION_KEY` のみ） |
 
 ---

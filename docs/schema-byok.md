@@ -26,6 +26,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
 | `byok_daily_notified` | INTEGER | 0 | `1` after the 100% over-limit email has been sent for the current daily period. Cleared on rollover. |
 | `byok_monthly_notified` | INTEGER | 0 | Same as `byok_daily_notified`, monthly version. |
 | `byok_speed_priority` | INTEGER | 0 | Owner opt-in "speed priority" toggle. When `1` and `ai_source='byok'` with a Gemini provider, requests carry `generationConfig.thinkingConfig.thinkingBudget: 0` (skips the default thinking phase of 2.5-Flash-class models). When `0`, no `generationConfig` is sent at all, so non-thinking models are unaffected. Preserved across deactivate (owner preference, like limits). |
+| `byok_mode` | TEXT | `'server'` | **Key custody for this bot.** `'server'` = current encrypted server-side storage. `'local'` (**BYOK-Local**) = the key exists ONLY on the owner's machine inside the connector app; `api_key` stays empty (`''`) and the server relays a fixed semantic schema to the connector instead of calling the provider itself. Which mode a deployment offers is controlled by the `BYOK_KEY_CUSTODY` env var: `local` (bot-ya.app) permanently rejects the key-carrying `/activate` endpoint with 400, `server` (default, white-label) keeps the current behavior. |
 
 ## Lifecycle
 
@@ -60,6 +61,41 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         │     ai_source: 'byok' → 'platform' (never leave a broken selection)
         ▼
 [plan=free, byok_enabled=0]   (limits and counters retained)
+```
+
+## Lifecycle — BYOK-Local (`byok_mode='local'`)
+
+```
+[byok_enabled=0]
+        │
+        │  browser → http://127.0.0.1:<port>/byok/key   ★ key goes ONLY here
+        │  (connector app on the owner's machine tests the key against the
+        │   provider and stores it in .byok-keys.json next to the exe)
+        │
+        │  POST /api/admin/byok/activate-local  (provider, model, agreedTerms — NO key)
+        │
+        │  ├─ reject if a key is accidentally included (400, not stored, not logged)
+        │  ├─ reject if the owner's connector is not currently online
+        │  ├─ snapshot → pre_byok_*  (first activate only, same as server mode)
+        │  └─ api_key = '' , byok_enabled = 1, byok_mode = 'local'
+        ▼
+[byok_enabled=1, byok_mode='local', api_key='' — nothing to steal on the server]
+        │
+        │  /api/chat or LINE webhook
+        │
+        │  ├─ checkQuota() — same wallet as server mode
+        │  ├─ relay {provider, model, messages, systemPrompt, options} over the
+        │  │  reverse-WS connector (no URL / headers / key can be expressed)
+        │  ├─ connector builds the HTTP request from its own hardcoded provider
+        │  │  table + locally stored key, streams deltas back
+        │  └─ incrementUsage() with the usage object the connector reports
+        │
+        │  connector offline → explicit offline message (no platform fallback)
+        │
+        │  POST /api/admin/byok/deactivate  (same endpoint as server mode)
+        │  └─ restore pre_byok_*, byok_enabled = 0, byok_mode = 'server'
+        ▼
+[byok_enabled=0]
 ```
 
 ## Encryption

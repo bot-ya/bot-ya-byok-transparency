@@ -5,7 +5,8 @@
  *   1. Webhook handler — LINE credentials decrypt (encrypted at rest, same crypto
  *      module as BYOK keys) + free plan exemption + pre-request quota check
  *   2. getAIResponse() — shared AI source resolution (resolveAiRouting, same as
- *      web chat) → decrypt → provider API call
+ *      web chat) → decrypt → provider API call. BYOK-Local (byok_mode='local')
+ *      relays to the owner's connector instead — no key on the server (same as web chat)
  *   3. Post-response usage increment (same quota wallet as web chat)
  *
  * Omitted from the original line.js:
@@ -22,6 +23,7 @@ const router = express.Router();
 const { loadClientsConfig, loadSettings } = require('../utils/config');
 const { callGeminiAPI, callGrokAPI, callChatGPTAPI, callClaudeAPI, callDeepSeekAPI, callQwenAPI, getBotQueue, resolveAiRouting } = require('../utils/ai');
 const { decrypt } = require('../utils/crypto');
+const { isConnectorOnline, callCloudViaConnector, BYOK_LOCAL_OFFLINE_MESSAGE } = require('../utils/connectorHub');
 const db = require('../db/db');
 const {
     checkQuota,
@@ -49,7 +51,16 @@ async function getAIResponse(botId, config, routing, userMessage, systemPrompt) 
     if (botQueue) await botQueue.acquire();
 
     try {
-        if (provider === 'grok') {
+        if (routing.byokLocal && provider !== 'ollama') {
+            // BYOK-Local: no key on the server. Relay {provider, model, messages,
+            // systemPrompt, options} to the owner's connector (same path as web chat).
+            // Connector offline → explicit offline reply, never a silent platform fallback.
+            if (!isConnectorOnline(config.ownerId)) {
+                return BYOK_LOCAL_OFFLINE_MESSAGE;
+            }
+            apiResult = await callCloudViaConnector(config.ownerId, provider, model, messages, systemPrompt,
+                { speedPriority: !!config.byokSpeedPriority });
+        } else if (provider === 'grok') {
             const apiKey = decrypt(config.apiKey);
             apiResult = await callGrokAPI(apiKey, model, messages, systemPrompt);
         } else if (provider === 'openai') {
