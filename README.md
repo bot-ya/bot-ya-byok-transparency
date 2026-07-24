@@ -6,8 +6,8 @@
 
 |  |  |
 |---|---|
-| **最終同期日** | 2026-07-22 |
-| **同期元 commit** | `28fda77ddff10feb215c3d2df6a2c405cda9eb44` |
+| **最終同期日** | 2026-07-25 |
+| **同期元 commit** | `88fab1ba8f07f2365cd06cd72522df7814e2a7ab` |
 | **ステータス** | Read-only mirror |
 | **ライセンス** | [MIT](./LICENSE) |
 
@@ -34,6 +34,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 - **キーはブラウザから `127.0.0.1` の接続アプリへ直送**され、bot-ya のサーバーを一度も通過しません（`admin-byok.js` の `/activate-local` はキーを受け取らず、誤って同送された場合は保存せず 400 で拒否します。キー同送の旧 `/activate` は `BYOK_KEY_CUSTODY=local` で恒久 400 です）
 - チャット時にサーバーが接続アプリへ送れるのは **`{provider, model, messages, systemPrompt, options}` という固定スキーマだけ**です（`connectorHub-cloud.js`）。URL・パス・ヘッダーを表現するフィールドが存在しないため、仮にサーバーが完全に侵害されても「キーを攻撃者の URL へ送れ」という指示を表現できません。宛先は接続アプリ内のプロバイダー固定表が 100% 決めます
 - 接続アプリのローカル受け口は **write-only**（キーを返すエンドポイントが存在しない）+ Origin 固定 + `127.0.0.1` bind です
+- 配布している Windows exe は `connector/bot-ya-connector.js` を `scripts/build-connector.cjs`（本体からそのままコピー）でビルドしたものです — esbuild で 1 ファイルにバンドル → Node SEA blob を生成 → 素の node.exe に注入 → rcedit で VERSIONINFO を製品情報に書き換え、という手順が全部読めます。exe は現状未署名のため、中身を疑う場合はこの 2 ファイルから自分でビルドして挙動を比較できます
 
 つまり「運営はあなたのキーを悪用しません（信じてください）」ではなく、「**構造上できません**」。この主張はこのリポジトリのコードで検証できます。
 
@@ -49,7 +50,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 - データベース接続 / マイグレーション（`src/db/db.js`、`src/db/schema.sql`）
 - プロバイダー API アダプター実装（`src/utils/ai.js`）
 - メーラー、エラーハンドラ、レートリミッター
-- `package.json`、ビルド設定
+- `package.json`、サーバー側のビルド設定（接続アプリ exe のビルドスクリプトだけは例外として収録 — 下記ファイルマップ参照）
 
 `src/utils/` の 2 ファイル（`crypto.js` / `byokQuota.js`）は本体からそのままコピーしてあります。`src/routes/` の 3 ファイル（`admin-byok.js` / `chat-byok.js` / `line-byok.js`）は、より大きなハンドラから BYOK 経路だけを手動で抜き出した抜粋です。各ファイル冒頭のコメントに「何を残して何を省いたか」を記してあります。
 
@@ -68,6 +69,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 | `src/routes/line-byok.js` | LINE webhook の BYOK 経路抜粋（web チャットと同じ財布を共有） |
 | `src/utils/connectorHub-cloud.js` | **BYOK-Local**: サーバーがコネクタへ送る意味論スキーマの抜粋（URL/ヘッダー/キーを表現するフィールドが存在しないこと） |
 | `connector/bot-ya-connector.js` | **BYOK-Local**: 配布している「接続アプリ」の完全なソース（本体からそのままコピー）。キーの受け口（write-only・Origin 固定）・ローカル保存・プロバイダー固定表・レート天井のすべてがここで読める |
+| `scripts/build-connector.cjs` | **BYOK-Local**: 配布 exe のビルドスクリプト（本体からそのままコピー）。上のソースがどう単一 exe になるか（esbuild バンドル → Node SEA blob 注入 → rcedit で VERSIONINFO 書き換え）を検証・再現できる |
 | `docs/schema-byok.md` | `bots` テーブルの BYOK 関連カラム定義、ライフサイクル（server / local 両モード）、暗号化方式 |
 | `.env.example` | 本リポ範囲で関係する環境変数（`ENCRYPTION_KEY` のみ） |
 
