@@ -7,7 +7,7 @@
 |  |  |
 |---|---|
 | **最終同期日** | 2026-07-25 |
-| **同期元 commit** | `88fab1ba8f07f2365cd06cd72522df7814e2a7ab` |
+| **同期元 commit** | `eb121bcbaba2a47e46fb8a6e1316c76dccf5177b` |
 | **ステータス** | Read-only mirror |
 | **ライセンス** | [MIT](./LICENSE) |
 
@@ -63,7 +63,7 @@ bot-ya のプロダクト本体は別の関心事として事業のために保�
 | ファイル | 役割 |
 |---|---|
 | `src/utils/crypto.js` | API キー保存用の AES-256-GCM（認証付き暗号化）encrypt / decrypt。GCM 移行前の旧 CBC 暗号文は読み取りのみ後方互換 |
-| `src/utils/byokQuota.js` | JST 区切りの日次 / 月次トークン使用量追跡、上限到達時のメール通知トリガー |
+| `src/utils/byokQuota.js` | JST 区切りの日次 / 月次トークン使用量追跡、80% 予告 / 100% 到達の段階メール通知トリガー |
 | `src/routes/admin-byok.js` | 管理画面 API: activate / deactivate / status / usage / limits / reset-counter |
 | `src/routes/chat-byok.js` | `/api/chat` の BYOK 経路抜粋（quota チェック → decrypt → プロバイダー呼び出し → 使用量加算） |
 | `src/routes/line-byok.js` | LINE webhook の BYOK 経路抜粋（web チャットと同じ財布を共有） |

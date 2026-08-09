@@ -29,7 +29,7 @@ const {
     checkQuota,
     incrementUsage,
     extractTokenUsage,
-    notifyLimitReached,
+    notifyQuotaThreshold,
     QUOTA_EXCEEDED_MESSAGE
 } = require('../utils/byokQuota');
 
@@ -104,11 +104,12 @@ async function getAIResponse(botId, config, routing, userMessage, systemPrompt) 
     }
 
     // ---- [line.js] LINE-side usage increment (same wallet as web chat, fire-and-forget) ----
+    // Staged notifications (80% warning / 100% reached) — same ladder as web chat.
     if (config.byokEnabled && provider !== 'ollama') {
         const tokens = extractTokenUsage(provider, apiResult.data?.raw);
         incrementUsage(botId, tokens).then(result => {
-            if (result.dailyJustCrossed) notifyLimitReached(botId, 'daily', result.state);
-            if (result.monthlyJustCrossed) notifyLimitReached(botId, 'monthly', result.state);
+            if (result.dailyCrossed) notifyQuotaThreshold(botId, 'daily', result.dailyCrossed, result.state);
+            if (result.monthlyCrossed) notifyQuotaThreshold(botId, 'monthly', result.monthlyCrossed, result.state);
         }).catch(e => console.error('[BYOK Quota LINE] increment error:', e.message));
     }
 

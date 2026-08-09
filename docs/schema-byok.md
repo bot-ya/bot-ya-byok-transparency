@@ -23,7 +23,7 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
 | `byok_monthly_used` | INTEGER | 0 | Tokens accumulated for the current month. |
 | `byok_daily_period` | TEXT | NULL | JST day key in `'YYYY-MM-DD'` format. Mismatch with today triggers a rollover (used = 0, notified = 0). |
 | `byok_monthly_period` | TEXT | NULL | JST month key in `'YYYY-MM'` format. |
-| `byok_daily_notified` | INTEGER | 0 | `1` after the 100% over-limit email has been sent for the current daily period. Cleared on rollover. |
+| `byok_daily_notified` | INTEGER | 0 | Notification ladder for the current daily period: `0` → `80` (warning email sent when usage crosses 80%; chat keeps running) → `100` (limit-reached email sent). Each stage fires exactly once (conditional-UPDATE winner takes the send); a single request jumping past 100% skips the 80% warning. Cleared on rollover. Legacy `1` (pre-staging "100% notified") is normalized to `100` by an idempotent startup migration. |
 | `byok_monthly_notified` | INTEGER | 0 | Same as `byok_daily_notified`, monthly version. |
 | `byok_speed_priority` | INTEGER | 0 | Owner opt-in "speed priority" toggle. When `1` and `ai_source='byok'` with a Gemini provider, requests carry `generationConfig.thinkingConfig.thinkingBudget: 0` (skips the default thinking phase of 2.5-Flash-class models). When `0`, no `generationConfig` is sent at all, so non-thinking models are unaffected. Preserved across deactivate (owner preference, like limits). |
 | `byok_mode` | TEXT | `'server'` | **Key custody for this bot.** `'server'` = current encrypted server-side storage. `'local'` (**BYOK-Local**) = the key exists ONLY on the owner's machine inside the connector app; `api_key` stays empty (`''`) and the server relays a fixed semantic schema to the connector instead of calling the provider itself. Which mode a deployment offers is controlled by the `BYOK_KEY_CUSTODY` env var: `local` (bot-ya.app) permanently rejects the key-carrying `/activate` endpoint with 400, `server` (default, white-label) keeps the current behavior. |
@@ -52,7 +52,8 @@ This document lists the BYOK-relevant columns only. Other columns (`bot_id`, `ow
         │  ├─ checkQuota() — block 429 if over limit
         │  ├─ decrypt(api_key) — throws if cipher corrupt/tampered (GCM auth tag)
         │  ├─ provider API call (Authorization header only)
-        │  └─ incrementUsage() — fire-and-forget; 100%-cross triggers email
+        │  └─ incrementUsage() — fire-and-forget; 80%-cross triggers a warning
+        │     email (chat keeps running), 100%-cross the limit-reached email
         │
         │  POST /api/admin/byok/deactivate
         │

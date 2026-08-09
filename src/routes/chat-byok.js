@@ -37,7 +37,7 @@ const {
     checkQuota,
     incrementUsage,
     extractTokenUsage,
-    notifyLimitReached,
+    notifyQuotaThreshold,
     QUOTA_EXCEEDED_MESSAGE
 } = require('../utils/byokQuota');
 const { AppError } = require('../middleware/errorHandler');
@@ -186,12 +186,14 @@ router.post('/api/chat', async (req, res, next) => {
         }
 
         // ---- [chat.js] Post-response usage increment (fire-and-forget) ----
-        // 100%-crossed → owner email notification triggered here.
+        // Staged owner email notifications: 80% warning (chat keeps running) and
+        // 100% limit-reached. Each stage fires exactly once per period (0→80→100
+        // ladder in byokQuota.js); a single jump past 100% skips the 80% warning.
         if (byokQuotaApplies) {
             const tokens = extractTokenUsage(provider, apiResult.data?.raw);
             incrementUsage(botId, tokens).then(result => {
-                if (result.dailyJustCrossed) notifyLimitReached(botId, 'daily', result.state);
-                if (result.monthlyJustCrossed) notifyLimitReached(botId, 'monthly', result.state);
+                if (result.dailyCrossed) notifyQuotaThreshold(botId, 'daily', result.dailyCrossed, result.state);
+                if (result.monthlyCrossed) notifyQuotaThreshold(botId, 'monthly', result.monthlyCrossed, result.state);
             }).catch(e => console.error('[BYOK Quota] increment error:', e.message));
         }
 
