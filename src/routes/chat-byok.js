@@ -42,6 +42,30 @@ const {
 } = require('../utils/byokQuota');
 const { AppError } = require('../middleware/errorHandler');
 
+// ---- [chat.js] Provider error scrub (2026-08-18) ----
+// Non-200 provider payloads are forwarded to the client (they carry the owner's
+// debugging info: wrong model name, quota exhausted, etc.). Forwarding used to
+// rely on the upstream assumption that providers never echo API key values in
+// error payloads; that assumption is no longer load-bearing. Key-shaped strings
+// are scrubbed to [REDACTED] before both the client forward and the server log.
+// Payloads that cannot be JSON-serialized fall back fail-secure to a fixed message.
+const PROVIDER_KEY_PATTERNS = [
+    /sk-[A-Za-z0-9_-]{16,}/g,        // OpenAI (sk- / sk-proj-)・Anthropic (sk-ant-)・DeepSeek・Qwen (DashScope)
+    /AIza[0-9A-Za-z_-]{20,}/g,       // Google API key
+    /xai-[A-Za-z0-9_-]{16,}/g,       // xAI
+    /Bearer\s+[A-Za-z0-9._~+/=-]{16,}/g // reflected Authorization headers
+];
+function scrubProviderError(payload) {
+    try {
+        let s = JSON.stringify(payload);
+        if (typeof s !== 'string') return { error: 'Upstream provider error' };
+        for (const re of PROVIDER_KEY_PATTERNS) s = s.replace(re, '[REDACTED]');
+        return JSON.parse(s);
+    } catch (e) {
+        return { error: 'Upstream provider error' };
+    }
+}
+
 // =========================================
 // /api/chat handler — BYOK-relevant excerpt
 // =========================================
@@ -178,11 +202,12 @@ router.post('/api/chat', async (req, res, next) => {
         }
 
         if (apiResult.status !== 200) {
-            // NOTE: Upstream provider error response is forwarded as-is.
-            // This relies on each provider (OpenAI / Anthropic / Gemini / xAI) not including
-            // API key values in error payloads. See README.md "Security design choices".
-            console.error("Upstream API Error:", JSON.stringify(apiResult.data?.raw || apiResult.data, null, 2));
-            return res.status(apiResult.status).json(apiResult.data?.raw || apiResult.data);
+            // Upstream error payload is forwarded AFTER key-shape scrubbing (see
+            // scrubProviderError above) — no longer trusting providers to keep key
+            // values out of error payloads. See README.md "Security design choices".
+            const scrubbed = scrubProviderError(apiResult.data?.raw || apiResult.data);
+            console.error("Upstream API Error:", JSON.stringify(scrubbed, null, 2));
+            return res.status(apiResult.status).json(scrubbed);
         }
 
         // ---- [chat.js] Post-response usage increment (fire-and-forget) ----
