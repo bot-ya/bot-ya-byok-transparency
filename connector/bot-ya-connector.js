@@ -34,7 +34,10 @@ const http = require('http');
 const path = require('path');
 const { StringDecoder } = require('string_decoder');
 
-const CONNECTOR_VERSION = '1.1.0'; // BYOK-Local (cloud key relay) 対応版
+// 挙動を変えたら必ず上げること（tests/connector_version_gate.js が VERSION.lock との
+// 一致を機械チェック）。サーバーはこの値を WS 接続ヘッダーで受け取り、
+// 旧コネクタが対応できない新機能をフェイルソフトに抑止する（例: Gemini 3 の thinkingLevel）。
+const CONNECTOR_VERSION = '1.2.0'; // Gemini 3 thinkingLevel + バージョンハンドシェイク対応版
 
 const BOTYA_URL = process.env.BOTYA_URL || 'http://localhost:3000';
 
@@ -510,7 +513,14 @@ let lastCpongAt = 0;
 function connect() {
     const wsUrl = buildWsUrl();
     console.log(`[connector] connecting to ${wsUrl} ...`);
-    ws = new WebSocket(wsUrl, { headers: { Authorization: `Bearer ${BOTYA_TOKEN}` } });
+    // バージョン申告: サーバーはこれを見て旧コネクタ非対応の新機能を抑止し、
+    // 管理画面に更新案内を出す（ヘッダー欠落 = 1.2.0 未満の旧コネクタと扱われる）
+    ws = new WebSocket(wsUrl, {
+        headers: {
+            Authorization: `Bearer ${BOTYA_TOKEN}`,
+            'x-botya-connector-version': CONNECTOR_VERSION
+        }
+    });
 
     ws.on('open', () => {
         console.log(`[connector] connected. relaying to local Ollama at ${OLLAMA_URL}`);
