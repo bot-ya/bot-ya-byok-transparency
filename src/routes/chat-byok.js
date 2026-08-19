@@ -183,10 +183,12 @@ router.post('/api/chat', async (req, res, next) => {
                     return next(new AppError("Server Error: Gemini API Key not configured.", 500));
                 }
                 // Speed-priority toggle (owner opt-in, /api/admin/byok/speed-priority):
-                // only when ON does the Gemini request carry
-                // generationConfig.thinkingConfig.thinkingBudget:0 (skips the default
-                // "thinking" phase of 2.5-Flash-class models). OFF sends no
-                // generationConfig at all, so non-thinking models are unaffected.
+                // only when ON does the Gemini request carry a thinkingConfig that
+                // minimizes the default "thinking" phase — generation-aware:
+                // Gemini 2.x = thinkingBudget:0, Gemini 3+ = thinkingLevel
+                // ('minimal' for Flash, 'low' for Pro; 3.x rejects thinkingBudget
+                // with 400 invalid argument). OFF sends no generationConfig at all,
+                // so non-thinking models are unaffected.
                 // Applied only when the owner selected BYOK as the AI source.
                 apiResult = await callGeminiAPI(apiKey, model, messages, SYSTEM_PROMPT,
                     { speedPriority: aiSource === 'byok' && !!config.byokSpeedPriority });

@@ -157,6 +157,19 @@ const openAICompatibleProvider = (prodBase) => ({
     }
 });
 
+// 速度優先の thinkingConfig をモデル世代で出し分ける（src/utils/ai.js の
+// speedThinkingConfig と同一ロジックのミラー — 変更時は両方を同期すること）。
+// Gemini 3 系以降は thinkingBudget が 400 になるため thinkingLevel
+// （Flash 系='minimal' / Pro='low'）、2.x とバージョン不明は従来の thinkingBudget:0。
+const speedThinkingConfig = (model) => {
+    const m = /^gemini-(\d+)/.exec(String(model || '').trim());
+    const major = m ? parseInt(m[1], 10) : 0;
+    if (major >= 3) {
+        return { thinkingLevel: /pro/i.test(model) ? 'low' : 'minimal' };
+    }
+    return { thinkingBudget: 0 };
+};
+
 const CLOUD_PROVIDERS = {
     google: {
         build(apiKey, model, messages, systemPrompt, options) {
@@ -169,7 +182,7 @@ const CLOUD_PROVIDERS = {
             }
             const body = { contents };
             if (options.speedPriority) {
-                body.generationConfig = { thinkingConfig: { thinkingBudget: 0 } };
+                body.generationConfig = { thinkingConfig: speedThinkingConfig(model) };
             }
             return {
                 // キーはクエリでなくヘッダーで送る（アクセスログ/中間装置にキーを残さない）
